@@ -107,7 +107,7 @@ class ObjManipulationCube(Base):
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
         self.cfg["env"]["numObservations"] = 16 if self.control_type == "osc" else 23
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
-        self.cfg["env"]["numActions"] = 4 if self.control_type == "osc" else 8
+        self.cfg["env"]["numActions"] = 7 if self.control_type == "osc" else 8
 
         # Values to be filled in at runtime
         self.states = {}                        # will be dict filled with relevant states to use for reward calculation
@@ -524,8 +524,8 @@ class ObjManipulationCube(Base):
 
         else:
             self._cubeA_state = torch.zeros((1, 13), device=self.device)
-            self._cubeA_state[0, 0] = random.uniform(-0.2, 0.2)
-            self._cubeA_state[0, 1] = random.uniform(-0.2, 0.2)
+            self._cubeA_state[0, 0] = random.uniform(-0.3, 0.3)
+            self._cubeA_state[0, 1] = random.uniform(-0.3, 0.3)
             self._cubeA_state[0, 2] = self._table_surface_pos[2] + 0.05/2
             self._cubeA_state[0, 3] = 0
             self._cubeA_state[0, 4] = 0
@@ -624,7 +624,7 @@ class ObjManipulationCube(Base):
         # Split arm and gripper command
         u_arm = torch.zeros(6, device=self.device)
         # print(self.actions[:-1])
-        u_arm[:3], u_gripper = self.actions[:-1], self.actions[-1]*0.2
+        u_arm, u_gripper = self.actions[:-1], self.actions[-1]
         # u_arm[4] = self.actions[-2]
 
         # print(u_arm, u_gripper)
