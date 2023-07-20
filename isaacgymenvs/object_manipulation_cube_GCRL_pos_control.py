@@ -36,7 +36,7 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import *
 
 from isaacgymenvs.utils.torch_jit_utils import *
-from task_base_class import Base
+from vec_task import Base
 import torch
 
 @torch.jit.script
@@ -78,7 +78,7 @@ class ObjManipulationCube(Base):
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = cfg
 
-        self.test = True
+        self.test = False
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
 
@@ -107,7 +107,7 @@ class ObjManipulationCube(Base):
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
         self.cfg["env"]["numObservations"] = 16 if self.control_type == "osc" else 23
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
-        self.cfg["env"]["numActions"] = 5 if self.control_type == "osc" else 8
+        self.cfg["env"]["numActions"] = 4 if self.control_type == "osc" else 8
 
         # Values to be filled in at runtime
         self.states = {}                        # will be dict filled with relevant states to use for reward calculation
@@ -239,7 +239,7 @@ class ObjManipulationCube(Base):
         self.franka_dof_upper_limits = []
         self._franka_effort_limits = []
         for i in range(self.num_franka_dofs):
-            franka_dof_props['driveMode'][i] = gymapi.DOF_MODE_POS if i > 6 else gymapi.DOF_MODE_EFFORT
+            franka_dof_props['driveMode'][i] = gymapi.DOF_MODE_POS# if i > 6 else gymapi.DOF_MODE_EFFORT
             if self.physics_engine == gymapi.SIM_PHYSX:
                 franka_dof_props['stiffness'][i] = franka_dof_stiffness[i]
                 franka_dof_props['damping'][i] = franka_dof_damping[i]
@@ -369,6 +369,8 @@ class ObjManipulationCube(Base):
         jacobian = gymtorch.wrap_tensor(_jacobian)
         hand_joint_index = self.gym.get_actor_joint_dict(env_ptr, franka_handle)['panda_hand_joint']
         self._j_eef = jacobian[:, hand_joint_index, :, :7]
+        self._pos_jacobian = jacobian[:, hand_joint_index-1, 0:6, :7]
+        # [:, self.fingertip_centered_body_id_env - 1, 0: 6, 0: 7]
         _massmatrix = self.gym.acquire_mass_matrix_tensor(self.sim, "franka")
         mm = gymtorch.wrap_tensor(_massmatrix)
         self._mm = mm[:, :7, :7]
@@ -616,6 +618,18 @@ class ObjManipulationCube(Base):
 
         return u
 
+    def _get_delta_dof_pos(self, delta_pose, jacobian):
+        """Get delta Franka DOF position from delta pose using specified IK method."""
+
+        # print(delta_pose)
+        lambda_val = 0.1
+        jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2)
+        lambda_matrix = (lambda_val ** 2) * torch.eye(n=jacobian.shape[1], device=self.device)
+        delta_dof_pos = jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
+        delta_dof_pos = delta_dof_pos.squeeze(-1)
+
+        return delta_dof_pos
+
     def pre_physics_step(self, actions):
         self.actions = actions.clone()
 
@@ -624,7 +638,7 @@ class ObjManipulationCube(Base):
         # Split arm and gripper command
         u_arm = torch.zeros(6, device=self.device)
         # print(self.actions[:-1])
-        u_arm[:4], u_gripper = self.actions[:-1], self.actions[-1]
+        u_arm[:3], u_gripper = self.actions[:-1]*0.05, self.actions[-1]
         # u_arm[4] = self.actions[-2]
 
         # print(u_arm, u_gripper)
@@ -633,27 +647,47 @@ class ObjManipulationCube(Base):
         # Control arm (scale value first)
         # u_arm = u_arm * self.cmd_limit / self.action_scale
         if self.control_type == "osc":
-            u_arm = self._compute_osc_torques(dpose=u_arm)
-        self._arm_control[:] = u_arm
+            delta_dof_pos = self._get_delta_dof_pos(delta_pose=u_arm, jacobian=self._pos_jacobian)
+        # print(delta_dof_pos)
 
-        # print(self._effort_control)
+        pos = torch.zeros((1, 9), device=self.device)
 
-        # Control gripper
+        pos[0,0:7] = self.states['q'][:7].unsqueeze(0) + delta_dof_pos.unsqueeze(0)
+
         u_fingers = torch.zeros_like(self._gripper_control)
         fingers_width = self.states["q"][-2]+self.states["q"][-1]
         target_fingers_width = fingers_width + u_gripper
         u_fingers[0] = target_fingers_width / 2.0
         u_fingers[1] = target_fingers_width / 2.0
-        # u_fingers[0] = torch.where(u_gripper >= 0.0, self.franka_dof_upper_limits[-2].item(),
-        #                               self.franka_dof_lower_limits[-2].item())
-        # u_fingers[1] = torch.where(u_gripper >= 0.0, self.franka_dof_upper_limits[-1].item(),
-        #                               self.franka_dof_lower_limits[-1].item())
-        # Write gripper command to appropriate tensor buffer
-        self._gripper_control[:] = u_fingers
+        pos[0, -2:] = u_fingers
 
-        # Deploy actions
-        self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self._pos_control))
-        self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self._effort_control))
+        # pos = tensor_clamp(
+        #     pos,
+        #     self.franka_dof_lower_limits.unsqueeze(0), self.franka_dof_upper_limits)
+
+
+        # Reset the internal obs accordingly
+        self._q[0, :] = pos
+        self._qd[0, :] = torch.zeros_like(self._qd)
+
+        # Set any position control to the current position, and any vel / effort control to be 0
+        # NOTE: Task takes care of actually propagating these controls in sim using the SimActions API
+        self._pos_control[:] = pos
+        self._effort_control[:] = torch.zeros_like(pos)
+
+        print(self._pos_control)
+
+        # Deploy updates
+        multi_env_ids_int32 = self._global_indices[0, 0].flatten()
+        self.gym.set_dof_position_target_tensor_indexed(self.sim,
+                                                        gymtorch.unwrap_tensor(self._pos_control),
+                                                        gymtorch.unwrap_tensor(multi_env_ids_int32),
+                                                        len(multi_env_ids_int32))
+
+        self.gym.set_dof_actuation_force_tensor_indexed(self.sim,
+                                                        gymtorch.unwrap_tensor(self._effort_control),
+                                                        gymtorch.unwrap_tensor(multi_env_ids_int32),
+                                                        len(multi_env_ids_int32))
 
     def post_physics_step(self):
         self.observations = self.compute_observations()

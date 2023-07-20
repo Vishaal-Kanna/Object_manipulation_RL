@@ -28,8 +28,6 @@
 
 import copy
 from typing import Dict, Any, Tuple, List, Set
-from collections import OrderedDict
-from copy import deepcopy
 
 import gym
 import gymnasium
@@ -48,8 +46,6 @@ from isaacgymenvs.utils.utils import nested_dict_get_attr, nested_dict_set_attr
 
 from collections import deque
 
-from stable_baselines3.common.vec_env import VecEnv
-
 import sys
 
 EXISTING_SIM = None
@@ -63,7 +59,7 @@ def _create_sim_once(gym, *args, **kwargs):
         EXISTING_SIM = gym.create_sim(*args, **kwargs)
         return EXISTING_SIM
 
-class Base(gymnasium.Env, VecEnv):
+class Base(gymnasium.Env):
 
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 24}
 
@@ -103,18 +99,18 @@ class Base(gymnasium.Env, VecEnv):
         self.observation_space = self.obs_space = spaces.Dict(
             {
                 "observation": spaces.Box(np.ones(self.num_observations) * -np.Inf, np.ones(self.num_observations) * np.Inf),
-                "achieved_goal": spaces.Box(np.ones(12) * -np.Inf, np.ones(12) * np.Inf),
-                "desired_goal": spaces.Box(np.ones(12) * -np.Inf, np.ones(12) * np.Inf),
+                "achieved_goal": spaces.Box(np.ones(3) * -np.Inf, np.ones(3) * np.Inf),
+                "desired_goal": spaces.Box(np.ones(3) * -np.Inf, np.ones(3) * np.Inf),
             }
         )
 
-        self.observations = OrderedDict({"observation": torch.zeros(self.num_envs, self.num_observations),
-                             "achieved_goal": torch.zeros(self.num_envs, 12),
-                             "desired_goal": torch.zeros(self.num_envs, 12)})
+        self.observations = {"observation": torch.zeros(self.num_observations),
+                             "achieved_goal": torch.zeros(3),
+                             "desired_goal": torch.zeros(3)}
 
-        self.progress = self.max_episode_length*torch.ones(self.num_envs, device=self.device, dtype=torch.long)
-        self.terminated = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
-        self.truncated = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+        self.progress = 0
+        self.terminated = False
+        self.truncated = False
 
 
         self.control_freq_inv = config["env"].get("controlFrequencyInv", 1)
@@ -258,53 +254,26 @@ class Base(gymnasium.Env, VecEnv):
         self.observations["achieved_goals"] = torch.clamp(self.observations["achieved_goal"], -self.clip_obs, self.clip_obs)
         self.observations["desired_goals"] = torch.clamp(self.observations["achieved_goal"], -self.clip_obs, self.clip_obs)
 
-        obs_np = OrderedDict({"observation": self.observations["observation"].detach().cpu().numpy(),
-                             "achieved_goal": self.observations["achieved_goal"].detach().cpu().numpy(),
-                             "desired_goal": self.observations["desired_goal"].detach().cpu().numpy()})
+        obs_np = {}
+        obs_np["observation"] = self.observations["observation"].detach().cpu().numpy()
+        obs_np["achieved_goal"] = self.observations["achieved_goal"].detach().cpu().numpy()
+        obs_np["desired_goal"] = self.observations["desired_goal"].detach().cpu().numpy()
 
-        # if self.is_success(self.observations["achieved_goal"], self.observations["desired_goal"]):
-        #     terminated = True
-        # else:
-        #     terminated = False
+        if self.is_success(self.observations["achieved_goal"], self.observations["desired_goal"]):
+            terminated = True
+        else:
+            terminated = False
 
-        self.terminated = self.is_success(self.observations["achieved_goal"], self.observations["desired_goal"])
-
-        # info = {"is_success": self.terminated}
+        info = {"is_success": terminated}
 
         self.progress += 1
 
-        # if self.progress >= self.max_episode_length - 1:
-        #     truncated = True
-        # else:
-        #     truncated = False
+        if self.progress >= self.max_episode_length - 1:
+            truncated = True
+        else:
+            truncated = False
 
-        # self.truncated = torch.where((self.progress >= self.max_episode_length - 1), torch.ones_like(self.truncated), torch.zeros_like(self.truncated))
-        #
-        # env_ids = torch.where(self.terminated>0 or self.truncated>0, torch.ones_like(self.truncated), torch.zeros_like(self.truncated))
-        env_ids = (self.progress >= self.max_episode_length - 1) | (self.terminated != 0)
-
-        # print(env_ids)
-
-        info = self._compute_infos(obs_np, actions.detach().cpu().numpy(), self.rewards, env_ids.detach().cpu().numpy())
-
-
-        if torch.any(env_ids):
-            print("Current Reward : ", np.mean(self.rewards))
-            # info[env_idx]['terminal_observation'] = obs
-            self.reset()
-        # for env_idx in range(self.num_envs):
-        #     if env_ids[env_idx]==True:
-        #         self.reset()
-
-        # print(self.progress)
-        # print(env_ids)
-
-
-
-        return obs_np, self.rewards, env_ids.detach().cpu().numpy(), info #self.terminated.detach().cpu().numpy(), self.truncated.detach().cpu().numpy(), {} #info
-
-    def _compute_infos(self, all_obs, all_actions, all_rews, all_dones):
-        return [{} for _ in range(self.num_envs)]
+        return obs_np, self.rewards, terminated, truncated, info
 
     def reset(
         self,
@@ -313,25 +282,22 @@ class Base(gymnasium.Env, VecEnv):
         options= None,
     ):
 
-        # env_ids = torch.where(self.terminated>0 or self.truncated>0, torch.ones_like(self.truncated), torch.zeros_like(self.truncated))
-        env_ids = (self.progress >= self.max_episode_length - 1) | (self.terminated != 0)
-        # print('here---------------------------')
+        self.reset_process()
 
-        self.reset_process(env_ids)
-
-        self.progress[env_ids] = 0
+        self.progress = 0
 
         self.observations["observation"] = torch.clamp(self.observations["observation"], -self.clip_obs, self.clip_obs)
         self.observations["achieved_goal"] = torch.clamp(self.observations["achieved_goal"], -self.clip_obs, self.clip_obs)
         self.observations["desired_goal"] = torch.clamp(self.observations["desired_goal"], -self.clip_obs, self.clip_obs)
 
-        obs_np = OrderedDict({"observation": self.observations["observation"].detach().cpu().numpy(),
-                              "achieved_goal": self.observations["achieved_goal"].detach().cpu().numpy(),
-                              "desired_goal": self.observations["desired_goal"].detach().cpu().numpy()})
+        obs_np = {}
+        obs_np["observation"] = self.observations["observation"].detach().cpu().numpy()
+        obs_np["achieved_goal"] = self.observations["achieved_goal"].detach().cpu().numpy()
+        obs_np["desired_goal"] = self.observations["desired_goal"].detach().cpu().numpy()
 
         info = {"is_success": self.is_success(self.observations["achieved_goal"], self.observations["desired_goal"])}
 
-        return obs_np
+        return obs_np, info
 
     def render(self, mode="rgb_array"):
         """Draw the frame to the viewer, and check for keyboard events."""
@@ -419,28 +385,3 @@ class Base(gymnasium.Env, VecEnv):
 
     def close(self):
         self.sim.close()
-
-    def step_async(self, actions):
-        pass
-
-    def step_wait(self):
-        pass
-
-    def get_attr(self, attr_name, indices=None):
-        pass
-
-    def set_attr(self, attr_name, value, indices=None):
-        pass
-
-    def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
-        pass
-
-    def seed(self, seed):
-        pass
-
-    def env_is_wrapped(self, wrapper_class, indices=None):
-        if indices is None:
-            n = self.num_envs
-        else:
-            n = len(indices)
-        return [False] * n

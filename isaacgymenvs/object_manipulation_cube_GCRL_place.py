@@ -107,7 +107,7 @@ class ObjManipulationCube(Base):
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
         self.cfg["env"]["numObservations"] = 16 if self.control_type == "osc" else 23
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
-        self.cfg["env"]["numActions"] = 5 if self.control_type == "osc" else 8
+        self.cfg["env"]["numActions"] = 3 if self.control_type == "osc" else 8
 
         # Values to be filled in at runtime
         self.states = {}                        # will be dict filled with relevant states to use for reward calculation
@@ -413,6 +413,29 @@ class ObjManipulationCube(Base):
         # Refresh states
         self._update_states()
 
+        if self.progress == 0:
+            self._cubeA_state = torch.zeros((1, 13), device=self.device)
+            self._cubeA_state[0, 0] = self.states['eef_pos'][0]
+            self._cubeA_state[0, 1] = self.states['eef_pos'][1]
+            self._cubeA_state[0, 2] = self.states['eef_pos'][2]
+            self._cubeA_state[0, 3] = 0
+            self._cubeA_state[0, 4] = 0
+            self._cubeA_state[0, 5] = 0
+            self._cubeA_state[0, 6] = 1
+
+            self._cubeA_state[0, 7] = 0
+            self._cubeA_state[0, 8] = 0
+            self._cubeA_state[0, 9] = 0
+            self._cubeA_state[0, 10] = 0
+            self._cubeA_state[0, 11] = 0
+            self._cubeA_state[0, 12] = 0
+
+            self._root_state[0,3,:] = self._cubeA_state
+            multi_env_ids_cubes_int32 = self._global_indices[0, -1].flatten()
+            self.gym.set_actor_root_state_tensor_indexed(
+                self.sim, gymtorch.unwrap_tensor(self._root_state),
+                gymtorch.unwrap_tensor(multi_env_ids_cubes_int32), len(multi_env_ids_cubes_int32))
+
     def compute_reward(self, achieved_goal, desired_goal, info=None):
 
         if not torch.is_tensor(achieved_goal):
@@ -488,13 +511,13 @@ class ObjManipulationCube(Base):
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
 
         self.observations["observation"] = torch.cat([self.states[ob] for ob in obs], dim=-1)
-        obs = ["cubeA_pos", "eef_pos", "eef_lf_pos", "eef_rf_pos"]
+        obs = ["cubeA_pos"]#, "eef_pos", "eef_lf_pos", "eef_rf_pos"]
         # obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
         self.observations["achieved_goal"] = torch.cat([self.states[ob] for ob in obs], dim=-1)
         self.observations["desired_goal"][:3] = torch.tensor(self.goal_position)
-        self.observations["desired_goal"][3:6] = torch.tensor(self.states["cubeA_pos"])
-        self.observations["desired_goal"][6:9] = torch.tensor(self.states["cubeA_pos"])
-        self.observations["desired_goal"][9:12] = torch.tensor(self.states["cubeA_pos"])
+        # self.observations["desired_goal"][3:6] = torch.tensor(self.states["cubeA_pos"])
+        # self.observations["desired_goal"][6:9] = torch.tensor(self.states["cubeA_pos"])
+        # self.observations["desired_goal"][9:12] = torch.tensor(self.states["cubeA_pos"])
 
         # print(self.states['cubeA_pos'])
 
@@ -547,7 +570,7 @@ class ObjManipulationCube(Base):
                                       self._table_surface_pos[2] + 0.05 / 2 + random.uniform(0.0, 0.5)]
 
         # Reset agent
-        reset_noise = torch.zeros((1, 9), device=self.device)
+        reset_noise = torch.rand((1, 9), device=self.device)
         pos = tensor_clamp(
             self.franka_default_dof_pos.unsqueeze(0) +
             self.franka_dof_noise * 2.0 * (reset_noise - 0.5),
@@ -624,14 +647,8 @@ class ObjManipulationCube(Base):
         # Split arm and gripper command
         u_arm = torch.zeros(6, device=self.device)
         # print(self.actions[:-1])
-        u_arm[:4], u_gripper = self.actions[:-1], self.actions[-1]
-        # u_arm[4] = self.actions[-2]
+        u_arm[:3] = self.actions
 
-        # print(u_arm, u_gripper)
-        # print(self.cmd_limit, self.action_scale)
-
-        # Control arm (scale value first)
-        # u_arm = u_arm * self.cmd_limit / self.action_scale
         if self.control_type == "osc":
             u_arm = self._compute_osc_torques(dpose=u_arm)
         self._arm_control[:] = u_arm
@@ -640,10 +657,10 @@ class ObjManipulationCube(Base):
 
         # Control gripper
         u_fingers = torch.zeros_like(self._gripper_control)
-        fingers_width = self.states["q"][-2]+self.states["q"][-1]
-        target_fingers_width = fingers_width + u_gripper
-        u_fingers[0] = target_fingers_width / 2.0
-        u_fingers[1] = target_fingers_width / 2.0
+        # fingers_width = self.states["q"][-2]+self.states["q"][-1]
+        # target_fingers_width = fingers_width + u_gripper
+        u_fingers[0] = 0.04 / 2.0
+        u_fingers[1] = 0.04 / 2.0
         # u_fingers[0] = torch.where(u_gripper >= 0.0, self.franka_dof_upper_limits[-2].item(),
         #                               self.franka_dof_lower_limits[-2].item())
         # u_fingers[1] = torch.where(u_gripper >= 0.0, self.franka_dof_upper_limits[-1].item(),
@@ -654,6 +671,8 @@ class ObjManipulationCube(Base):
         # Deploy actions
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self._pos_control))
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self._effort_control))
+        # if self.progress == 0:
+            # time.sleep(10)
 
     def post_physics_step(self):
         self.observations = self.compute_observations()
@@ -754,42 +773,42 @@ class ObjManipulationCube(Base):
         # reward = -d
 
         # print(achieved_goal.shape)
-        if achieved_goal.shape == torch.Size([1638, 12]):
-            d = torch.norm(achieved_goal[:, 3:6].cuda() - desired_goal[:, 3:6].cuda(), dim=-1)
-            d_lf = torch.norm(desired_goal[:, 6:9].cuda() - achieved_goal[:, 6:9].cuda(), dim=-1)
-            d_rf = torch.norm(desired_goal[:, 9:12].cuda() - achieved_goal[:, 9:12].cuda(), dim=-1)
-            dist_reward = 1 - torch.tanh(10.0 * (d + d_lf + d_rf) / 3)
-
-            cubeA_height = achieved_goal[:, 2] - self.reward_settings["table_height"]
-            cubeA_lifted = (cubeA_height - 0.05) > 0.04
-            lift_reward = cubeA_lifted.cuda()
+        if achieved_goal.shape == torch.Size([1638, 3]):
+            # d = torch.norm(achieved_goal[:, 3:6].cuda() - desired_goal[:, 3:6].cuda(), dim=-1)
+            # d_lf = torch.norm(desired_goal[:, 6:9].cuda() - achieved_goal[:, 6:9].cuda(), dim=-1)
+            # d_rf = torch.norm(desired_goal[:, 9:12].cuda() - achieved_goal[:, 9:12].cuda(), dim=-1)
+            # dist_reward = 1 - torch.tanh(10.0 * (d + d_lf + d_rf) / 3)
+            #
+            # cubeA_height = achieved_goal[:, 2] - self.reward_settings["table_height"]
+            # cubeA_lifted = (cubeA_height - 0.05) > 0.04
+            # lift_reward = cubeA_lifted.cuda()
 
             d_ab = torch.norm(achieved_goal[:, :3].cuda() - desired_goal[:, :3].cuda(), dim=-1)
-            align_reward = (1 - torch.tanh(10.0 * d_ab))*lift_reward
-
-            dist_reward = torch.max(dist_reward, align_reward)
-
-            reward = self.reward_settings["r_dist_scale"] * dist_reward + self.reward_settings[
-                "r_align_scale"] * align_reward + self.reward_settings["r_lift_scale"] * lift_reward
+            # align_reward = (1 - torch.tanh(10.0 * d_ab))*lift_reward
+            #
+            # dist_reward = torch.max(dist_reward, align_reward)
+            #
+            # reward = self.reward_settings["r_dist_scale"] * dist_reward + self.reward_settings[
+            #     "r_align_scale"] * align_reward + self.reward_settings["r_lift_scale"] * lift_reward
         else:
-            d = torch.norm(achieved_goal[3:6].cuda() - desired_goal[3:6].cuda(), dim=-1)
-            d_lf = torch.norm(desired_goal[6:9].cuda() - achieved_goal[6:9].cuda(), dim=-1)
-            d_rf = torch.norm(desired_goal[9:12].cuda() - achieved_goal[9:12].cuda(), dim=-1)
-            dist_reward = 1 - torch.tanh(10.0 * (d + d_lf + d_rf) / 3)
-
-            cubeA_height = achieved_goal[2] - self.reward_settings["table_height"]
-            cubeA_lifted = (cubeA_height - 0.05) > 0.04
-            lift_reward = cubeA_lifted.cuda()
+            # d = torch.norm(achieved_goal[3:6].cuda() - desired_goal[3:6].cuda(), dim=-1)
+            # d_lf = torch.norm(desired_goal[6:9].cuda() - achieved_goal[6:9].cuda(), dim=-1)
+            # d_rf = torch.norm(desired_goal[9:12].cuda() - achieved_goal[9:12].cuda(), dim=-1)
+            # dist_reward = 1 - torch.tanh(10.0 * (d + d_lf + d_rf) / 3)
+            #
+            # cubeA_height = achieved_goal[2] - self.reward_settings["table_height"]
+            # cubeA_lifted = (cubeA_height - 0.05) > 0.04
+            # lift_reward = cubeA_lifted.cuda()
 
             d_ab = torch.norm(achieved_goal[:3].cuda() - desired_goal[:3].cuda(), dim=-1)
-            align_reward = (1 - torch.tanh(10.0 * d_ab)) * lift_reward
+            # align_reward = (1 - torch.tanh(10.0 * d_ab)) * lift_reward
+            #
+            # dist_reward = torch.max(dist_reward, align_reward)
+            #
+            # reward = self.reward_settings["r_dist_scale"] * dist_reward + self.reward_settings[
+            #     "r_align_scale"] * align_reward + self.reward_settings["r_lift_scale"] * lift_reward
 
-            dist_reward = torch.max(dist_reward, align_reward)
-
-            reward = self.reward_settings["r_dist_scale"] * dist_reward + self.reward_settings[
-                "r_align_scale"] * align_reward + self.reward_settings["r_lift_scale"] * lift_reward
-
-        return reward
+        return -d_ab
 
 # @torch.jit.script
 # def compute_franka_reward(achiev):

@@ -1,4 +1,4 @@
-from object_manipulation_cube_GCRL import ObjManipulationCube
+from object_manipulation_cube_GCRL_hollow_cube import ObjManipulationCube
 
 cfg = {'name': 'FrankaCubeStack', 'physics_engine': 'physx', 'env': {'numEnvs': 256, 'envSpacing': 1.5, 'episodeLength': 300, 'enableDebugVis': False, 'clipObservations': 5.0, 'clipActions': 1.0, 'startPositionNoise': 0.25, 'startRotationNoise': 0.785, 'frankaPositionNoise': 0.0, 'frankaRotationNoise': 0.0, 'frankaDofNoise': 0.25, 'aggregateMode': 3, 'actionScale': 1.0, 'distRewardScale': 0.1, 'liftRewardScale': 1.5, 'alignRewardScale': 16.0, 'stackRewardScale': 16.0, 'controlType': 'osc', 'asset': {'assetRoot': '../../assets', 'assetFileNameFranka': 'urdf/franka_description/robots/franka_panda_gripper.urdf'}, 'enableCameraSensors': False}, 'sim': {'dt': 0.01667, 'substeps': 2, 'up_axis': 'z', 'use_gpu_pipeline': True, 'gravity': [0.0, 0.0, -9.81], 'physx': {'num_threads': 4, 'solver_type': 1, 'use_gpu': True, 'num_position_iterations': 8, 'num_velocity_iterations': 1, 'contact_offset': 0.005, 'rest_offset': 0.0, 'bounce_threshold_velocity': 0.2, 'max_depenetration_velocity': 1000.0, 'default_buffer_size_multiplier': 5.0, 'max_gpu_contact_pairs': 1048576, 'num_subscenes': 4, 'contact_collection': 0}}, 'task': {'randomize': False}}
 
@@ -19,8 +19,6 @@ eval_callback = EvalCallback(env, best_model_save_path='./logs/',
 # checkpoint_callback = CheckpointCallback(save_freq=100000, save_path='./logs/',
 #                                          name_prefix='franka_goal')
 
-# print(env.reset())
-# quit()
 model = TQC(
     "MultiInputPolicy",
     env,
@@ -37,16 +35,14 @@ model = TQC(
     verbose=1
 )
 
-# model = PPO("MultiInputPolicy", env, verbose=1)
-
 test=False
 
 if test==False:
-    # model = TQC.load("./logs/best_model.zip", env=env)
-    model.learn(total_timesteps=100000000000000000000000000)#, callback=eval_callback)
+    model = TQC.load("./logs/best_model.zip", env=env)
+    model.learn(total_timesteps=100000000000000000000000000, callback=eval_callback)
 
 else:
-    model = TQC.load("/home/vishaal/Downloads/best_model.zip", env=env)
+    model = TQC.load("./logs/best_model.zip", env=env)
 
     obs, info = env.reset()
     rews = 0

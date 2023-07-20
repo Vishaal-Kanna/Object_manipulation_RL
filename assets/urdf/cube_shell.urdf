@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot name="object">
+  <link name="object">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="cube.obj" scale="2 2 2"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="cube.obj" scale="2 2 2"/>
+      </geometry>
+    </collision>
+     <inertial>
+      <mass value="5.0"/>
+      <inertia ixx="2.5" ixy="0.0" ixz="0.0" iyy="2.5" iyz="0.0" izz="2.5"/>
+    </inertial>
+  </link>
+</robot>
+
