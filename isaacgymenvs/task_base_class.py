@@ -47,6 +47,7 @@ from isaacgymenvs.utils.utils import nested_dict_get_attr, nested_dict_set_attr
 from collections import deque
 
 import sys
+from torch.utils.tensorboard import SummaryWriter
 
 EXISTING_SIM = None
 SCREEN_CAPTURE_RESOLUTION = (1027, 768)
@@ -92,6 +93,7 @@ class Base(gymnasium.Env):
         self.num_agents = config["env"].get("numAgents", 1)  # used for multi-agent environments
 
         self.num_observations = config["env"].get("numObservations", 0)
+        self.num_goals = config["env"].get("numGoals", 0)
         self.num_actions = config["env"]["numActions"]
 
         self.action_space = spaces.Box(np.ones(self.num_actions) * -1., np.ones(self.num_actions) * 1.)
@@ -99,14 +101,14 @@ class Base(gymnasium.Env):
         self.observation_space = self.obs_space = spaces.Dict(
             {
                 "observation": spaces.Box(np.ones(self.num_observations) * -np.Inf, np.ones(self.num_observations) * np.Inf),
-                "achieved_goal": spaces.Box(np.ones(3) * -np.Inf, np.ones(3) * np.Inf),
-                "desired_goal": spaces.Box(np.ones(3) * -np.Inf, np.ones(3) * np.Inf),
+                "achieved_goal": spaces.Box(np.ones(self.num_goals) * -np.Inf, np.ones(self.num_goals) * np.Inf),
+                "desired_goal": spaces.Box(np.ones(self.num_goals) * -np.Inf, np.ones(self.num_goals) * np.Inf),
             }
         )
 
         self.observations = {"observation": torch.zeros(self.num_observations),
-                             "achieved_goal": torch.zeros(3),
-                             "desired_goal": torch.zeros(3)}
+                             "achieved_goal": torch.zeros(self.num_goals),
+                             "desired_goal": torch.zeros(self.num_goals)}
 
         self.progress = 0
         self.terminated = False
@@ -164,6 +166,14 @@ class Base(gymnasium.Env):
         self.create_sim()
         self.gym.prepare_sim(self.sim)
         self.sim_initialized = True
+
+        self.writer = SummaryWriter()
+
+        self.reward_per_episode = 0
+        self.dist_rew_per_episode = 0
+        self.align_rew_per_episode = 0
+        self.lift_rew_per_episode = 0
+        self.episode_count = 0
 
         self.set_viewer()
 
@@ -248,7 +258,9 @@ class Base(gymnasium.Env):
             self.gym.fetch_results(self.sim, True)
 
         # compute observations, rewards, resets, ...
-        self.observations, self.rewards = self.post_physics_step()
+        self.observations, self.rewards, dist_reward, align_reward, lift_reward = self.post_physics_step()
+
+        self.reward_per_episode += self.rewards
 
         self.observations["observation"] = torch.clamp(self.observations["observation"], -self.clip_obs, self.clip_obs)
         self.observations["achieved_goals"] = torch.clamp(self.observations["achieved_goal"], -self.clip_obs, self.clip_obs)
@@ -273,16 +285,28 @@ class Base(gymnasium.Env):
         else:
             truncated = False
 
+        if terminated or truncated:
+            self.episode_count += 1
+            self.writer.add_scalar("Total Reward per episode", self.reward_per_episode, self.episode_count)
+            self.writer.add_scalar("Distance reward", self.reward_per_episode, self.episode_count)
+            self.writer.add_scalar("Align reward", self.reward_per_episode, self.episode_count)
+            self.writer.add_scalar("Lift reward", self.reward_per_episode, self.episode_count)
+            self.writer.add_scalar("Episode length", self.progress, self.episode_count)
+            self.reward_per_episode = 0
+            self.dist_rew_per_episode = 0
+            self.align_rew_per_episode = 0
+            self.lift_rew_per_episode = 0
+
         return obs_np, self.rewards, terminated, truncated, info
 
     def reset(
-        self,
+        self,x=0,y=0,z=0,
         *,
         seed = None,
         options= None,
     ):
 
-        self.reset_process()
+        self.reset_process(x,y,z)
 
         self.progress = 0
 
@@ -384,4 +408,4 @@ class Base(gymnasium.Env):
         return sim_params
 
     def close(self):
-        self.sim.close()
+        pass

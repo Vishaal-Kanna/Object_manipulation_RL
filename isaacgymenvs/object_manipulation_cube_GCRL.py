@@ -106,6 +106,7 @@ class ObjManipulationCube(Base):
         # dimensions
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
         self.cfg["env"]["numObservations"] = 16 if self.control_type == "osc" else 23
+        self.cfg["env"]["numGoals"] = 12
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 5 if self.control_type == "osc" else 8
 
@@ -413,7 +414,7 @@ class ObjManipulationCube(Base):
         # Refresh states
         self._update_states()
 
-    def compute_reward(self, achieved_goal, desired_goal, info=None):
+    def compute_reward(self, achieved_goal, desired_goal, info=None, her=True):
 
         if not torch.is_tensor(achieved_goal):
             achieved_goal = torch.from_numpy(achieved_goal)
@@ -421,12 +422,16 @@ class ObjManipulationCube(Base):
         if not torch.is_tensor(desired_goal):
             desired_goal = torch.from_numpy(desired_goal)
 
-        rewards = self.compute_franka_reward(achieved_goal, desired_goal)
+        rewards, dist_reward, align_reward, lift_reward = self.compute_franka_reward(achieved_goal, desired_goal)
 
         if torch.is_tensor(rewards):
             rewards = rewards.detach().cpu().numpy()
 
-        return rewards
+        if her==True:
+            return rewards
+        else:
+            return rewards, dist_reward, align_reward, lift_reward
+
 
     def _reward(self, reward_settings, states, achieved_goal, desired_goal):
 
@@ -500,7 +505,7 @@ class ObjManipulationCube(Base):
 
         return self.observations
 
-    def reset_process(self):
+    def reset_process(self,x,y,z):
 
         # print('---------------------------------------------------')
         if self.test==True:
@@ -657,8 +662,8 @@ class ObjManipulationCube(Base):
 
     def post_physics_step(self):
         self.observations = self.compute_observations()
-        self.rewards = self.compute_reward(self.observations["achieved_goal"], self.observations["desired_goal"]) #self._reward(self.reward_settings, self.states, self.observations["achieved_goal"], self.observations["desired_goal"])
-        return self.observations, self.rewards
+        self.rewards, dist_reward, align_reward, lift_reward = self.compute_reward(self.observations["achieved_goal"], self.observations["desired_goal"], info=None, her=False) #self._reward(self.reward_settings, self.states, self.observations["achieved_goal"], self.observations["desired_goal"])
+        return self.observations, self.rewards, dist_reward, align_reward, lift_reward
 
         # debug viz
         # if self.viewer and self.debug_viz:
@@ -771,6 +776,7 @@ class ObjManipulationCube(Base):
 
             reward = self.reward_settings["r_dist_scale"] * dist_reward + self.reward_settings[
                 "r_align_scale"] * align_reward + self.reward_settings["r_lift_scale"] * lift_reward
+
         else:
             d = torch.norm(achieved_goal[3:6].cuda() - desired_goal[3:6].cuda(), dim=-1)
             d_lf = torch.norm(desired_goal[6:9].cuda() - achieved_goal[6:9].cuda(), dim=-1)
@@ -789,7 +795,8 @@ class ObjManipulationCube(Base):
             reward = self.reward_settings["r_dist_scale"] * dist_reward + self.reward_settings[
                 "r_align_scale"] * align_reward + self.reward_settings["r_lift_scale"] * lift_reward
 
-        return reward
+
+        return reward, dist_reward, align_reward, lift_reward
 
 # @torch.jit.script
 # def compute_franka_reward(achiev):

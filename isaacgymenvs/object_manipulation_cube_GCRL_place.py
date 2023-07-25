@@ -106,6 +106,7 @@ class ObjManipulationCube(Base):
         # dimensions
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
         self.cfg["env"]["numObservations"] = 16 if self.control_type == "osc" else 23
+        self.cfg["env"]["numGoals"] = 3
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 3 if self.control_type == "osc" else 8
 
@@ -523,7 +524,7 @@ class ObjManipulationCube(Base):
 
         return self.observations
 
-    def reset_process(self):
+    def reset_process(self, x,y,z):
 
         # print('---------------------------------------------------')
         if self.test==True:
@@ -543,7 +544,7 @@ class ObjManipulationCube(Base):
             self._cubeA_state[0, 11] = 0
             self._cubeA_state[0, 12] = 0
 
-            self.goal_position = [0.0, -0.3, self._table_surface_pos[2] + 0.05 / 2 + 0.2]
+            self.goal_position = [x, y, self._table_surface_pos[2] + 0.05 / 2 + z]
 
         else:
             self._cubeA_state = torch.zeros((1, 13), device=self.device)

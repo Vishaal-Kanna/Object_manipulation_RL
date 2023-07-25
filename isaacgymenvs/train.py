@@ -34,7 +34,7 @@ model = TQC(
     replay_buffer_kwargs=dict(goal_selection_strategy='future', n_sampled_goal=4),
     tau=0.05,
     seed=3157870761,
-    verbose=1
+    verbose=1,
 )
 
 # model = PPO("MultiInputPolicy", env, verbose=1)
@@ -43,7 +43,7 @@ test=False
 
 if test==False:
     # model = TQC.load("./logs/best_model.zip", env=env)
-    model.learn(total_timesteps=100000000000000000000000000)#, callback=eval_callback)
+    model.learn(total_timesteps=100000000000000000000000000, callback=eval_callback)
 
 else:
     model = TQC.load("/home/vishaal/Downloads/best_model.zip", env=env)
