@@ -64,7 +64,7 @@ class Base(gymnasium.Env):
 
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 24}
 
-    def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture: bool = False, force_render: bool = False):
+    def __init__(self, runs_dir, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture: bool = False, force_render: bool = False):
 
         split_device = sim_device.split(":")
         self.device_type = split_device[0]
@@ -158,9 +158,12 @@ class Base(gymnasium.Env):
         self.gym.prepare_sim(self.sim)
         self.sim_initialized = True
 
-        self.writer = SummaryWriter()
+        self.writer = SummaryWriter(log_dir=runs_dir)
 
         self.reward_per_episode = 0
+        self.lift_reward_per_episode = 0
+        self.dist_reward_per_episode = 0
+        self.lift_progress = 0
         self.episode_count = 0
 
         self.set_viewer()
@@ -246,9 +249,11 @@ class Base(gymnasium.Env):
             self.gym.fetch_results(self.sim, True)
 
         # compute observations, rewards, resets, ...
-        self.observations, self.rewards = self.post_physics_step()
+        self.observations, self.rewards, dist_reward, lift_reward = self.post_physics_step()
 
         self.reward_per_episode += self.rewards
+        self.lift_reward_per_episode += lift_reward
+        self.dist_reward_per_episode += dist_reward
 
         self.observations = torch.clamp(self.observations, -self.clip_obs, self.clip_obs)
 
@@ -256,18 +261,35 @@ class Base(gymnasium.Env):
 
         self.progress += 1
 
+        if lift_reward>0:
+            self.lift_progress += 1
+        elif lift_reward<=0:
+            self.lift_progress = 0
+
+        if self.lift_progress>20 or torch.abs(self.states["cubeA_pos"][0])>0.5 or torch.abs(self.states["cubeA_pos"][1])>0.5 or torch.norm(self.states["eef_pos"], dim=-1)>1.0:
+            terminated = True
+            self.lift_progress = 0
+        else:
+            terminated = False
+
+
         if self.progress >= self.max_episode_length - 1:
             truncated = True
         else:
             truncated = False
 
-        if truncated:
+        if truncated or terminated:
             self.episode_count += 1
             self.writer.add_scalar("Total Reward per episode", self.reward_per_episode, self.episode_count)
+            self.writer.add_scalar("Lift Reward per episode", self.lift_reward_per_episode, self.episode_count)
+            self.writer.add_scalar("Distance Reward per episode", self.dist_reward_per_episode, self.episode_count)
             self.writer.add_scalar("Episode length", self.progress, self.episode_count)
             self.reward_per_episode = 0
+            self.list_reward_per_episode = 0
+            self.dist_reward_per_episode = 0
 
-        return obs_np, self.rewards, False, truncated, {}
+
+        return obs_np, self.rewards, terminated, truncated, {}
 
     def reset(
         self,

@@ -75,7 +75,7 @@ def axisangle2quat(vec, eps=1e-6):
 
 class ObjManipulationCube(Base):
 
-    def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
+    def __init__(self, runs_dir, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = cfg
 
         self.test = False
@@ -146,7 +146,7 @@ class ObjManipulationCube(Base):
         self.up_axis = "z"
         self.up_axis_idx = 2
 
-        super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
+        super().__init__(runs_dir=runs_dir, config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
         # Franka defaults
         self.franka_default_dof_pos = to_torch(
@@ -221,11 +221,17 @@ class ObjManipulationCube(Base):
         table_stand_opts.fix_base_link = True
         table_stand_asset = self.gym.create_box(self.sim, *[0.2, 0.2, table_stand_height], table_opts)
 
-        self.cubeA_size = 0.050
+        # self.cubeA_size = 0.050
 
-        # Create cubeA asset
+        asset_root = "../assets"
+        box_asset_file = "urdf/cube.urdf"
+        # box_asset_file = "urdf/ycb/025_mug/025_mug.urdf"
+        # box_asset_file = "factory/urdf/factory_nut_m16_tight.urdf"
+
+        # nut_asset = self.gym.load_asset(self.sim, urdf_root, nut_file, nut_options)
+
         cubeA_opts = gymapi.AssetOptions()
-        cubeA_asset = self.gym.create_box(self.sim, *([self.cubeA_size] * 3), cubeA_opts)
+        cubeA_asset = self.gym.load_asset(self.sim, asset_root, box_asset_file, cubeA_opts)
         cubeA_color = gymapi.Vec3(0.6, 0.1, 0.0)
 
         self.num_franka_bodies = self.gym.get_asset_rigid_body_count(franka_asset)
@@ -416,12 +422,12 @@ class ObjManipulationCube(Base):
 
     def compute_reward(self):
 
-        rewards = self.compute_franka_reward()
+        rewards, dist_reward, lift_reward = self.compute_franka_reward()
 
         if torch.is_tensor(rewards):
             rewards = rewards.detach().cpu().numpy()
 
-        return rewards
+        return rewards, dist_reward, lift_reward
 
     def compute_observations(self):
         self._refresh()
@@ -440,7 +446,7 @@ class ObjManipulationCube(Base):
         self._cubeA_state = torch.zeros((1, 13), device=self.device)
         self._cubeA_state[0, 0] = random.uniform(-0.3, 0.3)
         self._cubeA_state[0, 1] = random.uniform(-0.3, 0.3)
-        self._cubeA_state[0, 2] = self._table_surface_pos[2] + 0.05/2
+        self._cubeA_state[0, 2] = self._table_surface_pos[2]
         self._cubeA_state[0, 3] = 0
         self._cubeA_state[0, 4] = 0
         self._cubeA_state[0, 5] = 0
@@ -564,22 +570,27 @@ class ObjManipulationCube(Base):
 
     def post_physics_step(self):
         self.observations = self.compute_observations()
-        self.rewards = self.compute_reward() #self._reward(self.reward_settings, self.states, self.observations["achieved_goal"], self.observations["desired_goal"])
-        return self.observations, self.rewards
+        self.rewards, dist_reward, lift_reward = self.compute_reward() #self._reward(self.reward_settings, self.states, self.observations["achieved_goal"], self.observations["desired_goal"])
+        return self.observations, self.rewards, dist_reward, lift_reward
 
     def compute_franka_reward(self):
 
-
         d = torch.norm(self.states['cubeA_pos'].cuda() - self.states['eef_pos'], dim=-1)
 
+        dist_reward = 0
+        lift_reward = 0
+
         if d > 0.1:
-            reward = -d
+            dist_reward = -d
+            reward = dist_reward
+            return reward, dist_reward, lift_reward
         else:
             cubeA_height = self.states['cubeA_pos'][2] - self.reward_settings["table_height"]
             cubeA_lifted = (cubeA_height - 0.05) > 0.04
-            reward = cubeA_lifted.cuda()
+            lift_reward = cubeA_lifted.cuda()
+            reward = lift_reward
 
-        return reward
+            return reward, dist_reward, lift_reward
 
 # @torch.jit.script
 # def compute_franka_reward(achiev):
