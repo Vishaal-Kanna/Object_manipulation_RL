@@ -537,11 +537,7 @@ class ObjManipulationCube(Base):
         # Split arm and gripper command
         u_arm = torch.zeros(6, device=self.device)
         # print(self.actions[:-1])
-        u_arm[:4], u_gripper = self.actions[:-1], self.actions[-1]
-        # u_arm[4] = self.actions[-2]
-
-        # print(u_arm, u_gripper)
-        # print(self.cmd_limit, self.action_scale)
+        u_arm[:4], u_gripper = self.actions[:-1]*0.2, self.actions[-1]*0.05
 
         # Control arm (scale value first)
         # u_arm = u_arm * self.cmd_limit / self.action_scale
@@ -549,19 +545,13 @@ class ObjManipulationCube(Base):
             u_arm = self._compute_osc_torques(dpose=u_arm)
         self._arm_control[:] = u_arm
 
-        # print(self._effort_control)
-
         # Control gripper
         u_fingers = torch.zeros_like(self._gripper_control)
         fingers_width = self.states["q"][-2]+self.states["q"][-1]
         target_fingers_width = fingers_width + u_gripper
         u_fingers[0] = target_fingers_width / 2.0
         u_fingers[1] = target_fingers_width / 2.0
-        # u_fingers[0] = torch.where(u_gripper >= 0.0, self.franka_dof_upper_limits[-2].item(),
-        #                               self.franka_dof_lower_limits[-2].item())
-        # u_fingers[1] = torch.where(u_gripper >= 0.0, self.franka_dof_upper_limits[-1].item(),
-        #                               self.franka_dof_lower_limits[-1].item())
-        # Write gripper command to appropriate tensor buffer
+
         self._gripper_control[:] = u_fingers
 
         # Deploy actions
