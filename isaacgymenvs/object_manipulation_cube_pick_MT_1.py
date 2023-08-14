@@ -158,6 +158,9 @@ class ObjManipulationCube(Base, VecEnv):
 
         Base.__init__(self, runs_dir=runs_dir, config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
+        self.const_actions = torch.zeros((self.num_envs), device=self.device)
+        self.time_ = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+
         # Franka defaults
         self.franka_default_dof_pos = to_torch(
             [0, 0.1963, 0, -2.6180, 0, 2.9416, 0.7854, 0.035, 0.035], device=self.device
@@ -631,6 +634,11 @@ class ObjManipulationCube(Base, VecEnv):
     def pre_physics_step(self, actions):
         self.actions = actions.clone()
 
+        self.const_actions = torch.where(self.time_ == 0, self.actions[:, -1], self.const_actions)
+
+        self.actions[:, -1] = self.const_actions
+        self.time_ += 1
+        self.time_ = torch.where(self.time_ > 20, 0, self.time_)
         # print(self.actions)
 
         # Split arm and gripper command
@@ -643,6 +651,8 @@ class ObjManipulationCube(Base, VecEnv):
         if self.control_type == "osc":
             u_arm = self._compute_osc_torques(dpose=u_arm)
         self._arm_control[:, :] = u_arm
+
+
 
         # Control gripper
         u_fingers = torch.zeros_like(self._gripper_control)
@@ -695,7 +705,17 @@ class ObjManipulationCube(Base, VecEnv):
 
         reward = torch.where(dist_reward > 0.1, -dist_reward, lift_reward)
 
-        self.reset_buf = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), torch.zeros_like(self.reset_buf))
+        reset = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), torch.zeros_like(self.reset_buf))
+
+
+        # reset = torch.where(torch.abs(self.states['eef_pos'][:, 0]) >= 0.5, torch.ones_like(self.reset_buf), reset)
+        # reset = torch.where(torch.abs(self.states['eef_pos'][:, 1]) >= 0.5, torch.ones_like(self.reset_buf), reset)
+        #
+        #
+        # reset_buf = torch.where(abs(self.states['cubeA_pos'][:, 0]) >= 0.5, torch.ones_like(reset_buf), reset_buf)
+        # reset_buf = torch.where(abs(self.states['cubeA_pos'][:, 1]) >= 0.5, torch.ones_like(reset_buf), reset_buf)
+
+        self.reset_buf = reset
 
         return reward, -dist_reward, lift_reward
 
