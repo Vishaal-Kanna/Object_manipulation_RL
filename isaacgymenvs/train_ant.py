@@ -18,23 +18,23 @@ eval_callback = EvalCallback(env, best_model_save_path='./logs/Ant',
 
 # print(env.reset())
 # quit()
-model = TQC(
-    "MlpPolicy",
-    env,
-    # batch_size=2048,
-    buffer_size=1_000_000,
-    gamma=0.95,
-    learning_rate=0.0001,
-    # learning_starts=1000,
-    policy_kwargs=dict(net_arch=[512, 512, 512], n_critics=2),
-    tau=0.05,
-    seed=3157870761,
-    verbose=1,
-)
+# model = TQC(
+#     "MlpPolicy",
+#     env,
+#     # batch_size=2048,
+#     buffer_size=1_000_000,
+#     gamma=0.95,
+#     learning_rate=0.0001,
+#     # learning_starts=1000,
+#     policy_kwargs=dict(net_arch=[512, 512, 512], n_critics=2),
+#     tau=0.05,
+#     seed=3157870761,
+#     verbose=1,
+# )
 
-# model = PPO("MultiInputPolicy", env, verbose=1)
+model = PPO("MlpPolicy", env, verbose=1)
 
-test=True
+test=False
 
 if test==False:
     # model = TQC.load("./logs/best_model.zip", env=env)

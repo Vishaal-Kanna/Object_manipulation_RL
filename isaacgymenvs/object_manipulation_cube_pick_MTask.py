@@ -112,7 +112,7 @@ class ObjManipulationCube(Base, VecEnv):
 
         # dimensions
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
-        self.cfg["env"]["numObservations"] = 16+1 if self.control_type == "osc" else 23+1
+        self.cfg["env"]["numObservations"] = 16+4 if self.control_type == "osc" else 23+4
         self.cfg["env"]["numGoals"] = 12
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 4 if self.control_type == "osc" else 8
@@ -280,7 +280,7 @@ class ObjManipulationCube(Base, VecEnv):
         # self.cubeA_size = 0.050
         cubeA_asset = []
 
-        items = ["025_mug", "010_potted_meat_can", "cube", "cube_shell", "factory_bolt_m20_tight"]
+        items = ["cube", "cube", "cube", "cube"]#, "factory_bolt_m20_tight"]
 
         for i, asset in enumerate(items):
             asset_root = "../assets"
@@ -449,12 +449,11 @@ class ObjManipulationCube(Base, VecEnv):
         self.base_pose[:, 0] = self._root_state[:, 3, 0]
         self.base_pose[:, 1] = self._root_state[:, 3, 1]
 
-        self.task_ids = self.tasks.tile(math.ceil(self.num_envs / self.num_tasks,)).view(self.num_envs, 1).cuda()
-        # self.task_ids = torch.tensor([[5],
-        #         [5],
-        #         [5],
-        #         [5],
-        #         [5]], device='cuda:0')
+        # self.task_ids = self.tasks.tile(math.ceil(self.num_envs / self.num_tasks,)).view(self.num_envs, 1).cuda()
+        self.task_ids = torch.tensor([[1,0,0,0],
+                [0,1,0,0],
+                [0,0,1,0],
+                [0,0,0,1]], device='cuda:0')
 
         # Initialize actions
         self._pos_control = torch.zeros((self.num_envs, self.num_dofs), dtype=torch.float, device=self.device)
@@ -708,9 +707,18 @@ class ObjManipulationCube(Base, VecEnv):
         cubeA_lifted = (cubeA_height - 0.05) > 0.04
         lift_reward = cubeA_lifted.cuda()
 
+        pos_reward = (torch.norm(self.states["cubeA_pos"][:, :2], dim=-1) < 0.02)
+        cubeA_on_table = torch.abs(cubeA_height) < 0.02
+        gripper_away_from_cubeA = (dist_reward > 0.04)
+        place_reward = pos_reward & cubeA_on_table & gripper_away_from_cubeA
 
+        # reward[] = torch.where(dist_reward > 0.1, -dist_reward, lift_reward)
+        reward = torch.zeros_like(place_reward)
 
-        reward = torch.where(dist_reward > 0.1, -dist_reward, lift_reward)
+        reward[0] = -dist_reward[0]
+        reward[1] = torch.where(dist_reward > 0.1, -dist_reward, lift_reward)[1]
+        reward[2] = place_reward[2]
+        reward[3] = (torch.where(dist_reward > 0.1, -dist_reward, lift_reward) + place_reward)[3]
 
         reset = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), torch.zeros_like(self.reset_buf))
 
