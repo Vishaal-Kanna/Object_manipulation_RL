@@ -36,7 +36,7 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import *
 
 from isaacgymenvs.utils.torch_jit_utils import *
-from task_base_class_pick_MT import Base
+from task_base_class_pick_grasp_pos import Base
 import torch
 
 from stable_baselines3.common.vec_env import VecEnv
@@ -112,10 +112,10 @@ class ObjManipulationCube(Base, VecEnv):
 
         # dimensions
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
-        self.cfg["env"]["numObservations"] = 16+4 if self.control_type == "osc" else 23+4
+        self.cfg["env"]["numObservations"] = 16 if self.control_type == "osc" else 23+4
         self.cfg["env"]["numGoals"] = 12
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
-        self.cfg["env"]["numActions"] = 4 if self.control_type == "osc" else 8
+        self.cfg["env"]["numActions"] = 7 if self.control_type == "osc" else 8
 
         # Values to be filled in at runtime
         self.states = {}                        # will be dict filled with relevant states to use for reward calculation
@@ -304,6 +304,15 @@ class ObjManipulationCube(Base, VecEnv):
         self.franka_dof_lower_limits = []
         self.franka_dof_upper_limits = []
         self._franka_effort_limits = []
+
+        franka_dof_props["driveMode"][:7].fill(gymapi.DOF_MODE_POS)
+        franka_dof_props["stiffness"][:7].fill(400.0)
+        franka_dof_props["damping"][:7].fill(40.0)
+
+        franka_dof_props["driveMode"][7:].fill(gymapi.DOF_MODE_POS)
+        franka_dof_props["stiffness"][7:].fill(800.0)
+        franka_dof_props["damping"][7:].fill(40.0)
+
         for i in range(self.num_franka_dofs):
             franka_dof_props['driveMode'][i] = gymapi.DOF_MODE_POS if i > 6 else gymapi.DOF_MODE_EFFORT
             if self.physics_engine == gymapi.SIM_PHYSX:
@@ -322,8 +331,8 @@ class ObjManipulationCube(Base, VecEnv):
         self._franka_effort_limits = to_torch(self._franka_effort_limits, device=self.device)
         self.franka_dof_speed_scales = torch.ones_like(self.franka_dof_lower_limits)
         self.franka_dof_speed_scales[[7, 8]] = 0.1
-        franka_dof_props['effort'][7] = 200
-        franka_dof_props['effort'][8] = 200
+        # franka_dof_props['effort'][7] = 200
+        # franka_dof_props['effort'][8] = 200
 
         # Define start pose for franka
         franka_start_pose = gymapi.Transform()
@@ -455,6 +464,14 @@ class ObjManipulationCube(Base, VecEnv):
                 [0,0,1,0],
                 [0,0,0,1]], device='cuda:0')
 
+        self.init_pos_list = []
+        self.init_rot_list = []
+
+        hand_handle = self.gym.find_actor_rigid_body_handle(self.envs[0], 0, "panda_hand")
+        hand_pose = self.gym.get_rigid_transform(self.envs[0], hand_handle)
+        self.init_pos_list.append([hand_pose.p.x, hand_pose.p.y, hand_pose.p.z])
+        self.init_rot_list.append([hand_pose.r.x, hand_pose.r.y, hand_pose.r.z, hand_pose.r.w])
+
         # Initialize actions
         self._pos_control = torch.zeros((self.num_envs, self.num_dofs), dtype=torch.float, device=self.device)
         self._effort_control = torch.zeros_like(self._pos_control)
@@ -500,7 +517,7 @@ class ObjManipulationCube(Base, VecEnv):
 
     def compute_observations(self):
         self._refresh()
-        obs = ["task_id", "cubeA_quat", "cubeA_pos", "eef_pos", "eef_quat"]
+        obs = ["cubeA_quat", "cubeA_pos", "eef_pos", "eef_quat"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
 
@@ -692,8 +709,7 @@ class ObjManipulationCube(Base, VecEnv):
                 self.dist_reward_per_episode[env_id] = 0
             self.reset_process(env_ids)
 
-        self.compute_observations()      cubeA_lifted = (cubeA_height - 0.05) > 0.04
-        lift_reward = cubeA_lifted.cuda()
+        self.compute_observations()
 
         self.compute_reward()
         rew_per_ep, dist_rew_per_ep, lift_rew_per_ep = self.compute_franka_reward()
@@ -706,6 +722,9 @@ class ObjManipulationCube(Base, VecEnv):
         dist_reward = torch.norm(self.states['cubeA_pos'].cuda() - self.states['eef_pos'], dim=-1)
 
         cubeA_height = self.states['cubeA_pos'][:, 2] - self.reward_settings["table_height"]
+
+        cubeA_lifted = (cubeA_height - 0.05) > 0.04
+        lift_reward = cubeA_lifted.cuda()
 
         pos_reward = (torch.norm(self.states["cubeA_pos"][:, :2], dim=-1) < 0.02)
         cubeA_on_table = torch.abs(cubeA_height) < 0.02

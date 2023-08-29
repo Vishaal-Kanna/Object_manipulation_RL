@@ -146,7 +146,7 @@ class ObjManipulationCube(Base):
         self.up_axis = "z"
         self.up_axis_idx = 2
 
-        super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
+        super().__init__(runs_dir='isaacgymenvs/runs/Cube_test',config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
         # Franka defaults
         self.franka_default_dof_pos = to_torch(
@@ -223,10 +223,10 @@ class ObjManipulationCube(Base):
 
         # self.cubeA_size = 0.050
 
-        asset_root = "../assets"
+        asset_root = "/home/vishaal/Downloads/assets"
         # box_asset_file = "urdf/cube_shell.urdf"
         # box_asset_file = "urdf/ycb/025_mug/025_mug.urdf"
-        box_asset_file = "factory/urdf/factory_nut_m16_tight.urdf"
+        box_asset_file = "dataset/grasping/32/mobility.urdf" #cube, 15, 17
 
         nut_options = gymapi.AssetOptions()
         nut_options.flip_visual_attachments = False
@@ -586,7 +586,7 @@ class ObjManipulationCube(Base):
     def post_physics_step(self):
         self.observations = self.compute_observations()
         self.rewards = self.compute_reward() #self._reward(self.reward_settings, self.states, self.observations["achieved_goal"], self.observations["desired_goal"])
-        return self.observations, self.rewards
+        return self.observations, self.rewards, 0, 0
 
     def compute_franka_reward(self):
 

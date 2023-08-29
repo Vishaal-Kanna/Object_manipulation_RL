@@ -186,8 +186,8 @@ class ObjManipulationCube(Base):
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
         upper = gymapi.Vec3(spacing, spacing, spacing)
 
-        asset_root = "../assets"
-        franka_asset_file = "urdf/franka_description/robots/franka_panda_gripper.urdf"
+        asset_root = "/home/vishaal/Downloads/assets"
+        franka_asset_file = "dataset/grasping/3/mobility.urdf"
 
         # if "asset" in self.cfg["env"]:
         #     asset_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.cfg["env"]["asset"].get("assetRoot", asset_root))
