@@ -112,7 +112,7 @@ class ObjManipulationCube(Base, VecEnv):
 
         # dimensions
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
-        self.cfg["env"]["numObservations"] = 16+1 if self.control_type == "osc" else 23+1
+        self.cfg["env"]["numObservations"] = 16+5 if self.control_type == "osc" else 23+5
         self.cfg["env"]["numGoals"] = 12
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 4 if self.control_type == "osc" else 8
@@ -290,6 +290,10 @@ class ObjManipulationCube(Base, VecEnv):
             # nut_asset = self.gym.load_asset(self.sim, urdf_root, nut_file, nut_options)
 
             cubeA_opts = gymapi.AssetOptions()
+            cubeA_opts.vhacd_enabled = True
+            cubeA_opts.vhacd_params.resolution = 300000
+            cubeA_opts.vhacd_params.max_convex_hulls = 100
+            cubeA_opts.vhacd_params.max_num_vertices_per_ch = 64
             cubeA_asset.append(self.gym.load_asset(self.sim, asset_root, box_asset_file, cubeA_opts))
         cubeA_color = gymapi.Vec3(0.6, 0.1, 0.0)
 
@@ -449,13 +453,11 @@ class ObjManipulationCube(Base, VecEnv):
         self.base_pose[:, 0] = self._root_state[:, 3, 0]
         self.base_pose[:, 1] = self._root_state[:, 3, 1]
 
-        self.task_ids = self.tasks.tile(math.ceil(self.num_envs / self.num_tasks,)).view(self.num_envs, 1).cuda()
-        # self.task_ids = torch.tensor([[5],
-        #         [5],
-        #         [5],
-        #         [5],
-        #         [5]], device='cuda:0')
-
+        self.task_ids = torch.tensor([[1,0,0,0,0],
+                [0,1,0,0,0],
+                [0,0,1,0,0],
+                [0,0,0,1,0],
+                [0,0,0,0,1],], device='cuda:0')
         # Initialize actions
         self._pos_control = torch.zeros((self.num_envs, self.num_dofs), dtype=torch.float, device=self.device)
         self._effort_control = torch.zeros_like(self._pos_control)
@@ -503,6 +505,8 @@ class ObjManipulationCube(Base, VecEnv):
         self._refresh()
         obs = ["task_id", "cubeA_quat", "cubeA_pos", "eef_pos", "eef_quat"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
+        # print([self.states[ob] for ob in obs])
+        # quit()
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
 
         # print(self.states['cubeA_pos'])
